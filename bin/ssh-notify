@@ -51,6 +51,11 @@ EOF
 setup_remote=0
 no_forward=0
 ssh_args=()
+ssh_opts_for_scp=()
+remote_host=""
+
+# SSH options that take an argument
+ssh_opts_with_arg="-b -c -D -E -e -F -I -i -J -L -l -m -O -o -p -Q -R -S -W -w"
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -66,14 +71,32 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             usage
             ;;
+        -i|-p|-F|-o|-J)
+            # SSH options we need to pass to both ssh and scp
+            ssh_args+=("$1" "$2")
+            ssh_opts_for_scp+=("$1" "$2")
+            shift 2
+            ;;
+        -*)
+            # Check if this option takes an argument
+            if [[ " $ssh_opts_with_arg " == *" $1 "* ]]; then
+                ssh_args+=("$1" "$2")
+                shift 2
+            else
+                ssh_args+=("$1")
+                shift
+            fi
+            ;;
         *)
+            # Positional argument - this is the host (or command)
+            remote_host="$1"
             ssh_args+=("$1")
             shift
             ;;
     esac
 done
 
-if [[ ${#ssh_args[@]} -eq 0 ]]; then
+if [[ -z "$remote_host" ]]; then
     echo "Error: No host specified" >&2
     echo "Usage: ssh-notify [OPTIONS] [user@]host" >&2
     exit 1
@@ -92,16 +115,7 @@ ssh_cmd+=("${ssh_args[@]}")
 
 # If setup requested, copy files first then connect
 if [[ "$setup_remote" == "1" ]]; then
-    # Extract host from args (simplified - assumes last arg without - is the host)
-    remote_host=""
-    for arg in "${ssh_args[@]}"; do
-        if [[ "$arg" != -* ]]; then
-            remote_host="$arg"
-            break
-        fi
-    done
-
-    if [[ -z "$remote_host" ]]; then
+    if [[ -z "$remote_host" || "$remote_host" == -* ]]; then
         echo "Error: Could not determine remote host for setup" >&2
         exit 1
     fi
@@ -109,19 +123,19 @@ if [[ "$setup_remote" == "1" ]]; then
     echo "Setting up terminal-notifier on $remote_host..."
 
     # Create remote directory
-    ssh "$remote_host" "mkdir -p ~/.tnotify/bin"
+    ssh "${ssh_opts_for_scp[@]}" "$remote_host" "mkdir -p ~/.tnotify/bin"
 
     # Copy tnotify client
-    scp -q "$SCRIPT_DIR/tnotify" "${remote_host}:~/.tnotify/bin/"
-    ssh "$remote_host" "chmod +x ~/.tnotify/bin/tnotify"
+    scp -q "${ssh_opts_for_scp[@]}" "$SCRIPT_DIR/tnotify" "${remote_host}:~/.tnotify/bin/"
+    ssh "${ssh_opts_for_scp[@]}" "$remote_host" "chmod +x ~/.tnotify/bin/tnotify"
 
     # Copy shell hooks
-    scp -q "$LIB_DIR/shell-hooks.zsh" "${remote_host}:~/.tnotify/"
-    scp -q "$LIB_DIR/shell-hooks.bash" "${remote_host}:~/.tnotify/"
+    scp -q "${ssh_opts_for_scp[@]}" "$LIB_DIR/shell-hooks.zsh" "${remote_host}:~/.tnotify/"
+    scp -q "${ssh_opts_for_scp[@]}" "$LIB_DIR/shell-hooks.bash" "${remote_host}:~/.tnotify/"
 
     # Add tnotify to PATH in remote shell
-    ssh "$remote_host" 'grep -q "/.tnotify/bin" ~/.bashrc 2>/dev/null || echo "export PATH=\"\$HOME/.tnotify/bin:\$PATH\"" >> ~/.bashrc'
-    ssh "$remote_host" 'grep -q "/.tnotify/bin" ~/.zshrc 2>/dev/null || echo "export PATH=\"\$HOME/.tnotify/bin:\$PATH\"" >> ~/.zshrc'
+    ssh "${ssh_opts_for_scp[@]}" "$remote_host" 'grep -q "/.tnotify/bin" ~/.bashrc 2>/dev/null || echo "export PATH=\"\$HOME/.tnotify/bin:\$PATH\"" >> ~/.bashrc'
+    ssh "${ssh_opts_for_scp[@]}" "$remote_host" 'grep -q "/.tnotify/bin" ~/.zshrc 2>/dev/null || echo "export PATH=\"\$HOME/.tnotify/bin:\$PATH\"" >> ~/.zshrc'
 
     echo "Setup complete!"
     echo ""
