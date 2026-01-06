@@ -121,6 +121,34 @@ ssh-notify --no-forward user@server.com
 ssh user@server.com
 ```
 
+### Multiple Terminals over SSH
+
+Only **one** `ssh-notify` session can bind port 9999 on the remote server at a time. Additional connections will show a warning but still connect (they just won't forward notifications).
+
+**Recommended: Use tmux on the remote server**
+
+```bash
+# Connect with notifications
+ssh-notify user@server.com
+
+# On remote, start tmux
+tmux new -s work
+
+# Now use tmux for multiple panes/windows
+# Ctrl+b c  = new window
+# Ctrl+b %  = split vertical
+# Ctrl+b "  = split horizontal
+```
+
+This way, one SSH tunnel handles all your notifications across multiple terminal panes.
+
+**Alternative approaches:**
+
+- **tmux locally** - Run `ssh-notify` inside a local tmux session so you can detach/reattach without killing the SSH connection
+- **Regular ssh for extras** - Use regular `ssh` (not `ssh-notify`) when you just need a quick second terminal
+
+When you disconnect, the port is released. Your next `ssh-notify` connection will work normally.
+
 ### With Tmux
 
 Notifications automatically include tmux pane/window information when running inside tmux:
@@ -187,6 +215,25 @@ These commands never trigger notifications (they're interactive or too quick):
    ```bash
    cat /tmp/notify-server.log
    cat /tmp/notify-server.stderr.log
+   ```
+
+### "remote port forwarding failed for listen port 9999"
+
+This means port 9999 is already in use on the remote server, usually from a stale SSH session.
+
+1. Find and kill the stale session:
+   ```bash
+   # Check what's using the port
+   ssh user@server.com "sudo lsof -i :9999"
+
+   # Kill the stale sshd process (replace PID)
+   ssh user@server.com "sudo kill <PID>"
+   ```
+
+2. Or use a different port:
+   ```bash
+   export TNOTIFY_PORT=9998
+   ssh-notify user@server.com
    ```
 
 ### SSH notifications not working
