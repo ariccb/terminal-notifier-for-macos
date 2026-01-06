@@ -1,0 +1,116 @@
+#!/bin/bash
+# notify-server - Listens for notification requests and displays macOS notifications
+# Part of terminal-notifier-for-macos
+
+set -euo pipefail
+
+PORT="${TNOTIFY_PORT:-9999}"
+LOG_FILE="${TNOTIFY_LOG:-/tmp/notify-server.log}"
+
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
+}
+
+show_notification() {
+    local title="$1"
+    local message="$2"
+    local subtitle="$3"
+    local sound="$4"
+
+    # Build osascript command
+    local script="display notification \"$message\""
+    script="$script with title \"$title\""
+
+    if [[ -n "$subtitle" ]]; then
+        script="$script subtitle \"$subtitle\""
+    fi
+
+    if [[ -n "$sound" ]]; then
+        script="$script sound name \"$sound\""
+    fi
+
+    osascript -e "$script" 2>/dev/null || true
+}
+
+parse_and_notify() {
+    local line="$1"
+
+    # Skip empty lines
+    [[ -z "$line" ]] && return
+
+    log "Received: $line"
+
+    # Parse JSON using built-in tools
+    # Expected format: {"cmd":"...", "exit":0, "duration":45, "tmux":"session:window.pane", "tmux_name":"window-name"}
+
+    local cmd exit_code duration tmux_info tmux_name
+
+    # Extract fields from JSON (simple parsing for our known format)
+    cmd=$(echo "$line" | sed -n 's/.*"cmd":"\([^"]*\)".*/\1/p')
+    exit_code=$(echo "$line" | sed -n 's/.*"exit":\([0-9]*\).*/\1/p')
+    duration=$(echo "$line" | sed -n 's/.*"duration":\([0-9]*\).*/\1/p')
+    tmux_info=$(echo "$line" | sed -n 's/.*"tmux":"\([^"]*\)".*/\1/p')
+    tmux_name=$(echo "$line" | sed -n 's/.*"tmux_name":"\([^"]*\)".*/\1/p')
+
+    # Default values
+    [[ -z "$cmd" ]] && cmd="Command"
+    [[ -z "$exit_code" ]] && exit_code="0"
+    [[ -z "$duration" ]] && duration="?"
+
+    # Build title
+    local title="Terminal"
+    if [[ -n "$tmux_info" ]]; then
+        if [[ -n "$tmux_name" ]]; then
+            title="Terminal - $tmux_name ($tmux_info)"
+        else
+            title="Terminal - tmux $tmux_info"
+        fi
+    fi
+
+    # Build message - truncate long commands
+    local display_cmd="$cmd"
+    if [[ ${#display_cmd} -gt 50 ]]; then
+        display_cmd="${display_cmd:0:47}..."
+    fi
+    local message="\"$display_cmd\" completed (${duration}s)"
+
+    # Build subtitle and choose sound based on exit code
+    local subtitle sound
+    if [[ "$exit_code" == "0" ]]; then
+        subtitle="✓ Success"
+        sound="Glass"
+    else
+        subtitle="✗ Failed (exit $exit_code)"
+        sound="Basso"
+    fi
+
+    show_notification "$title" "$message" "$subtitle" "$sound"
+    log "Notification sent: $title - $message"
+}
+
+cleanup() {
+    log "Shutting down notify-server"
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+main() {
+    log "Starting notify-server on port $PORT"
+    echo "notify-server listening on port $PORT"
+    echo "Log file: $LOG_FILE"
+
+    # Use nc in listen mode, restart after each connection
+    while true; do
+        # macOS nc: -l requires port as argument, not -p
+        # -k keeps listening after client disconnects (macOS)
+        nc -l "$PORT" 2>/dev/null | while IFS= read -r line; do
+            parse_and_notify "$line"
+        done
+
+        # Small delay before restarting listener
+        sleep 0.1
+    done
+}
+
+main "$@"

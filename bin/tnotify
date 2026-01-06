@@ -1,0 +1,152 @@
+#!/bin/bash
+# tnotify - Send notification to notify-server
+# Part of terminal-notifier-for-macos
+
+set -euo pipefail
+
+PORT="${TNOTIFY_PORT:-9999}"
+HOST="${TNOTIFY_HOST:-localhost}"
+TIMEOUT=1
+
+usage() {
+    cat << EOF
+Usage: tnotify [OPTIONS] [MESSAGE]
+
+Send a notification to the notify-server.
+
+Options:
+  --cmd CMD        Command that was executed
+  --exit CODE      Exit code (0 = success, non-zero = failure)
+  --duration SECS  How long the command took
+  --tmux INFO      Tmux pane info (auto-detected if in tmux)
+  --tmux-name NAME Tmux window name (auto-detected if in tmux)
+  --host HOST      Server host (default: localhost)
+  --port PORT      Server port (default: 9999)
+  -h, --help       Show this help
+
+Examples:
+  tnotify --cmd "npm build" --exit 0 --duration 45
+  tnotify "Build complete"
+  tnotify --cmd "make test" --exit 1 --duration 120
+EOF
+    exit 0
+}
+
+# Detect tmux environment
+detect_tmux() {
+    if [[ -n "${TMUX:-}" ]]; then
+        # Get session:window.pane format
+        tmux display-message -p '#S:#I.#P' 2>/dev/null || echo ""
+    fi
+}
+
+detect_tmux_name() {
+    if [[ -n "${TMUX:-}" ]]; then
+        tmux display-message -p '#W' 2>/dev/null || echo ""
+    fi
+}
+
+# Parse arguments
+CMD=""
+EXIT_CODE="0"
+DURATION=""
+TMUX_INFO=""
+TMUX_NAME=""
+MESSAGE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cmd)
+            CMD="$2"
+            shift 2
+            ;;
+        --exit)
+            EXIT_CODE="$2"
+            shift 2
+            ;;
+        --duration)
+            DURATION="$2"
+            shift 2
+            ;;
+        --tmux)
+            TMUX_INFO="$2"
+            shift 2
+            ;;
+        --tmux-name)
+            TMUX_NAME="$2"
+            shift 2
+            ;;
+        --host)
+            HOST="$2"
+            shift 2
+            ;;
+        --port)
+            PORT="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+        *)
+            MESSAGE="$1"
+            shift
+            ;;
+    esac
+done
+
+# Auto-detect tmux if not provided
+if [[ -z "$TMUX_INFO" ]]; then
+    TMUX_INFO=$(detect_tmux)
+fi
+if [[ -z "$TMUX_NAME" ]]; then
+    TMUX_NAME=$(detect_tmux_name)
+fi
+
+# Use message as command if no command specified
+if [[ -z "$CMD" && -n "$MESSAGE" ]]; then
+    CMD="$MESSAGE"
+fi
+
+# Escape special characters for JSON
+escape_json() {
+    local s="$1"
+    s="${s//\\/\\\\}"  # Backslash
+    s="${s//\"/\\\"}"  # Double quote
+    s="${s//$'\n'/\\n}" # Newline
+    s="${s//$'\r'/\\r}" # Carriage return
+    s="${s//$'\t'/\\t}" # Tab
+    echo "$s"
+}
+
+CMD_ESCAPED=$(escape_json "$CMD")
+TMUX_INFO_ESCAPED=$(escape_json "$TMUX_INFO")
+TMUX_NAME_ESCAPED=$(escape_json "$TMUX_NAME")
+
+# Build JSON payload
+JSON="{\"cmd\":\"$CMD_ESCAPED\",\"exit\":$EXIT_CODE"
+if [[ -n "$DURATION" ]]; then
+    JSON="$JSON,\"duration\":$DURATION"
+fi
+if [[ -n "$TMUX_INFO" ]]; then
+    JSON="$JSON,\"tmux\":\"$TMUX_INFO_ESCAPED\""
+fi
+if [[ -n "$TMUX_NAME" ]]; then
+    JSON="$JSON,\"tmux_name\":\"$TMUX_NAME_ESCAPED\""
+fi
+JSON="$JSON}"
+
+# Send to server with timeout (don't block the shell)
+# Using timeout command or background with sleep
+if command -v timeout &>/dev/null; then
+    echo "$JSON" | timeout "$TIMEOUT" nc "$HOST" "$PORT" 2>/dev/null || true
+else
+    # macOS doesn't have timeout, use a subshell with backgrounding
+    (echo "$JSON" | nc -w "$TIMEOUT" "$HOST" "$PORT" 2>/dev/null) &
+    wait $! 2>/dev/null || true
+fi
+
+exit 0

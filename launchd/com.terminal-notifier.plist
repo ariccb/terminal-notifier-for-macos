@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.terminal-notifier</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__INSTALL_DIR__/bin/notify-server</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/notify-server.stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/notify-server.stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>TNOTIFY_PORT</key>
+        <string>9999</string>
+    </dict>
+</dict>
+</plist>
